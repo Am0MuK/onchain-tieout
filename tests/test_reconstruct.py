@@ -36,3 +36,22 @@ def test_internal_transfers_counted_and_failed_internal_ignored():
 def test_address_case_insensitive():
     txs = [tx(OTHER.upper().replace("0X", "0x"), WALLET.upper().replace("0X", "0x"), 5)]
     assert native_balance(WALLET, txs, []) == 5
+
+
+def ttx(frm, to, value, contract=USDC, symbol="USDC", decimals="6"):
+    return {"from": frm, "to": to, "value": str(value), "contractAddress": contract,
+            "tokenSymbol": symbol, "tokenDecimal": decimals}
+
+
+def test_token_in_out_per_contract():
+    rows = [ttx(OTHER, WALLET, 5_000_000), ttx(WALLET, OTHER, 1_500_000)]
+    out = token_balances(WALLET, rows)
+    assert out[USDC].raw == 3_500_000
+    assert out[USDC].decimals == 6
+    assert out[USDC].symbol == "USDC"
+
+
+def test_self_transfer_nets_zero():
+    out = token_balances(WALLET, [ttx(WALLET, WALLET, 42)])
+    assert out[USDC].raw == 0
+

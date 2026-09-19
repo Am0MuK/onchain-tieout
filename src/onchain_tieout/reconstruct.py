@@ -1,3 +1,14 @@
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class TokenBalance:
+    contract: str
+    symbol: str
+    decimals: int
+    raw: int
+
+
 def _is_reverted(tx: dict) -> bool:
     return tx.get("isError") == "1" or tx.get("txreceipt_status") == "0"
 
@@ -43,5 +54,44 @@ def native_balance(
     return balance
 
 
-def token_balances(wallet: str, token_txs: list[dict]):
-    raise NotImplementedError
+def token_balances(
+    wallet: str,
+    token_txs: list[dict],
+) -> dict[str, TokenBalance]:
+    w = wallet.lower()
+    balances: dict[str, int] = {}
+    symbols: dict[str, str] = {}
+    decimals_map: dict[str, int] = {}
+
+    for row in token_txs:
+        contract = row.get("contractAddress", "").lower()
+        if not contract:
+            continue
+
+        if contract not in balances:
+            balances[contract] = 0
+            symbols[contract] = row.get("tokenSymbol", "")
+            raw_decimals = row.get("tokenDecimal")
+            decimals_map[contract] = int(raw_decimals) if raw_decimals is not None and str(raw_decimals).strip() != "" else 18
+        else:
+            if not symbols[contract] and row.get("tokenSymbol"):
+                symbols[contract] = row.get("tokenSymbol")
+
+        val = int(row.get("value", 0))
+        frm = row.get("from", "").lower()
+        to = row.get("to", "").lower()
+
+        if to == w:
+            balances[contract] += val
+        if frm == w:
+            balances[contract] -= val
+
+    return {
+        c: TokenBalance(
+            contract=c,
+            symbol=symbols[c],
+            decimals=decimals_map[c],
+            raw=balances[c],
+        )
+        for c in balances
+    }
