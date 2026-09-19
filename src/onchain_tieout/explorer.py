@@ -1,6 +1,8 @@
 import re
 import httpx
 
+PAGE_SIZE = 10000
+
 
 class ExplorerError(Exception):
     """Raised when an explorer API call fails or returns an error status."""
@@ -11,23 +13,6 @@ def redact(text: str) -> str:
     """Redact sensitive API keys from URLs or error messages."""
     return re.sub(r"(apikey=)[^&\s]+", r"\1***", str(text), flags=re.IGNORECASE)
 
-
-def dedupe_key(action: str, row: dict):
-    if action == "txlist":
-        return row["hash"]
-    elif action == "txlistinternal":
-        return (row["hash"], row.get("traceId", ""))
-    elif action == "tokentx":
-        if "logIndex" in row:
-            return (row["hash"], row["logIndex"])
-        return (
-            row["hash"],
-            row.get("contractAddress", "").lower(),
-            row.get("from", "").lower(),
-            row.get("to", "").lower(),
-            row.get("value", ""),
-        )
-    return row.get("hash")
 
 
 class EtherscanClient:
@@ -57,7 +42,7 @@ class EtherscanClient:
             "startblock": str(start_block),
             "endblock": str(end_block),
             "page": "1",
-            "offset": "10000",
+            "offset": str(PAGE_SIZE),
             "sort": "asc",
             "apikey": self.api_key,
         }
@@ -79,7 +64,7 @@ class EtherscanClient:
         if status == "1":
             if isinstance(result, list):
                 return result
-            return []
+            raise ExplorerError(redact(f"status 1 but result is not a list: {result!r}"[:300]))
 
         if status == "0" and message == "No transactions found" and result == []:
             return []
@@ -96,30 +81,27 @@ class EtherscanClient:
         chain_id: int,
         end_block: int,
     ) -> list[dict]:
+        """Fetch every row up to end_block, paginating past the 10,000-row cap.
+
+        A full page may end in the middle of a block. Instead of de-duplicating
+        rows by a key (which can merge genuinely identical rows, e.g. two equal
+        transfers in one transaction), the rows of the last block are dropped
+        and that whole block is fetched again from the start of the next page.
+        """
         all_rows: list[dict] = []
-        seen: set = set()
         start_block = 0
 
         while True:
             page = self.fetch(action, address, chain_id, end_block, start_block=start_block)
-            if not page:
-                break
+            if len(page) < PAGE_SIZE:
+                all_rows.extend(page)
+                return all_rows
 
-            new_count = 0
-            for row in page:
-                key = dedupe_key(action, row)
-                if key not in seen:
-                    seen.add(key)
-                    all_rows.append(row)
-                    new_count += 1
-
-            if len(page) == 10000:
-                if new_count == 0:
-                    block_num = page[-1].get("blockNumber", start_block)
-                    raise ExplorerError(f"more than 10000 rows in block {block_num}; cannot paginate")
-                start_block = int(page[-1]["blockNumber"])
-            else:
-                break
-
-        return all_rows
-
+            first_block = int(page[0]["blockNumber"])
+            last_block = int(page[-1]["blockNumber"])
+            if first_block == last_block:
+                raise ExplorerError(
+                    f"more than {PAGE_SIZE} rows in block {last_block}; cannot paginate"
+                )
+            all_rows.extend(r for r in page if int(r["blockNumber"]) != last_block)
+            start_block = last_block

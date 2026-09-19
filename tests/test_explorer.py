@@ -38,7 +38,7 @@ def test_redact():
     assert "abc" not in redact("https://x/api?apikey=abc&module=account")
 
 
-def test_paginates_by_startblock_and_dedupes():
+def test_paginates_by_startblock_refetching_boundary_block():
     calls = []
 
     def handler(request):
@@ -67,3 +67,32 @@ def test_single_block_overflow_guard():
     with pytest.raises(ExplorerError, match="more than 10000 rows in block 50; cannot paginate"):
         c.fetch_all("txlist", WALLET, chain_id=1, end_block=10**9)
 
+
+
+def test_status_one_with_non_list_result_raises_not_empty():
+    c = _client({"status": "1", "message": "OK", "result": "unexpected string payload"})
+    with pytest.raises(ExplorerError, match="unexpected"):
+        c.fetch("txlist", WALLET, chain_id=1, end_block=100)
+
+
+def test_identical_transfers_in_one_tx_survive_page_boundary():
+    # Two identical transfers (same tx, token, from, to, value) and no logIndex
+    # field. They sit in the boundary block of a full page and are returned
+    # again by the continuation page. Both must be kept - collapsing them
+    # would silently undercount the balance.
+    dup = {"hash": "0xdup", "blockNumber": "999", "contractAddress": "0xt",
+           "from": "0xa", "to": WALLET, "value": "5"}
+
+    def handler(request):
+        start = int(request.url.params["startblock"])
+        if start == 0:
+            rows = [{"hash": f"0x{i}", "blockNumber": str(i // 10), "contractAddress": "0xt",
+                     "from": "0xa", "to": WALLET, "value": "1"} for i in range(9998)]
+            rows += [dict(dup), dict(dup)]
+        else:
+            rows = [dict(dup), dict(dup)]
+        return httpx.Response(200, json={"status": "1", "message": "OK", "result": rows})
+
+    c = EtherscanClient(api_key="k", http=mock_client(handler))
+    rows = c.fetch_all("tokentx", WALLET, chain_id=1, end_block=10**9)
+    assert sum(1 for r in rows if r["hash"] == "0xdup") == 2

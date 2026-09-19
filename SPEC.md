@@ -72,10 +72,13 @@ Default block is `eth_blockNumber − 64` so the explorer has indexed it.
 - any other `status == "0"` → raise `ExplorerError(message, result)`; never
   treated as empty history.
 - HTTP error / non-JSON → `ExplorerError`.
-- Pagination: request `page=1&offset=10000&sort=asc`. If exactly 10,000 rows come
-  back, request again with `startblock = last row's blockNumber` and de-duplicate
-  (keys: `txlist` → `hash`; `txlistinternal` → `(hash, traceId)`;
-  `tokentx` → `(hash, logIndex)`). Repeat until a page has < 10,000 rows.
+- `status == "1"` with a non-list `result` → `ExplorerError` (never an empty history).
+- Pagination: request `page=1&offset=10000&sort=asc`. If a page is full (10,000
+  rows), drop that page's rows from its last block and request again with
+  `startblock = that block`, so the boundary block is fetched whole from the next
+  page. No key-based de-duplication (it can merge genuinely identical rows, e.g.
+  two equal transfers in one transaction). If a full page lies entirely inside one
+  block → `ExplorerError` (cannot paginate).
 
 ## Diagnosis labels
 
