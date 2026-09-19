@@ -30,6 +30,23 @@ class Report:
         return all(r.status == "OK" for r in self.rows)
 
 
+def _compare(*, kind, contract, symbol, decimals, computed, read_actual, dust, diagnose_delta) -> Row:
+    """Read the on-chain balance and build one tie-out row."""
+    base = dict(kind=kind, contract=contract, symbol=symbol, decimals=decimals, computed=computed)
+    try:
+        actual = read_actual()
+    except RpcError:
+        return Row(**base, actual=None, status="READ_FAILED",
+                   label="balance_read_failed", explained=False)
+
+    delta = actual - computed
+    if abs(delta) <= int(dust * Decimal(10**decimals)):
+        return Row(**base, actual=actual, status="OK", label=None, explained=False)
+
+    label, explained = diagnose_delta(delta)
+    return Row(**base, actual=actual, status="MISMATCH", label=label, explained=explained)
+
+
 def run_tieout(
     wallet: str,
     chain_id: int,
@@ -38,7 +55,6 @@ def run_tieout(
     block: int | None = None,
     dust_units: str | float = "0.000000001",
 ) -> Report:
-    w = wallet.lower()
     if block is None:
         block = rpc.block_number() - 64
 
@@ -63,100 +79,26 @@ def run_tieout(
                 raw=0,
             )
 
-    dust_dec = Decimal(str(dust_units))
+    dust = Decimal(str(dust_units))
 
-    # Native balance check
-    native_dust_raw = int(dust_dec * Decimal(10**18))
-    try:
-        actual_native = rpc.get_balance(wallet, block)
-        delta_native = actual_native - computed_native
-        if abs(delta_native) <= native_dust_raw:
-            native_row = Row(
-                kind="native",
-                contract=None,
-                symbol="ETH",
-                decimals=18,
-                computed=computed_native,
-                actual=actual_native,
-                status="OK",
-                label=None,
-                explained=False,
-            )
-        else:
-            native_row = Row(
-                kind="native",
-                contract=None,
-                symbol="ETH",
-                decimals=18,
-                computed=computed_native,
-                actual=actual_native,
-                status="MISMATCH",
-                label="unexplained",
-                explained=False,
-            )
-    except RpcError:
-        native_row = Row(
-            kind="native",
-            contract=None,
-            symbol="ETH",
-            decimals=18,
-            computed=computed_native,
-            actual=None,
-            status="READ_FAILED",
-            label="balance_read_failed",
-            explained=False,
-        )
+    def read_native() -> int:
+        return rpc.get_balance(wallet, block)
 
-    # Token rows
+    native_row = _compare(
+        kind="native", contract=None, symbol="ETH", decimals=18,
+        computed=computed_native, read_actual=read_native, dust=dust,
+        diagnose_delta=lambda delta: ("unexplained", False),
+    )
+
     token_rows: list[Row] = []
     for token in tokens.values():
-        token_dust_raw = int(dust_dec * Decimal(10**token.decimals))
-        try:
-            actual = rpc.erc20_balance(token.contract, wallet, block)
-            delta = actual - token.raw
-            if abs(delta) <= token_dust_raw:
-                token_rows.append(
-                    Row(
-                        kind="erc20",
-                        contract=token.contract,
-                        symbol=token.symbol,
-                        decimals=token.decimals,
-                        computed=token.raw,
-                        actual=actual,
-                        status="OK",
-                        label=None,
-                        explained=False,
-                    )
-                )
-            else:
-                label, explained = diagnose(chain_id, wallet, token.contract, delta, txs)
-                token_rows.append(
-                    Row(
-                        kind="erc20",
-                        contract=token.contract,
-                        symbol=token.symbol,
-                        decimals=token.decimals,
-                        computed=token.raw,
-                        actual=actual,
-                        status="MISMATCH",
-                        label=label,
-                        explained=explained,
-                    )
-                )
-        except RpcError:
-            token_rows.append(
-                Row(
-                    kind="erc20",
-                    contract=token.contract,
-                    symbol=token.symbol,
-                    decimals=token.decimals,
-                    computed=token.raw,
-                    actual=None,
-                    status="READ_FAILED",
-                    label="balance_read_failed",
-                    explained=False,
-                )
-            )
+        token_rows.append(_compare(
+            kind="erc20", contract=token.contract, symbol=token.symbol,
+            decimals=token.decimals, computed=token.raw,
+            read_actual=lambda t=token: rpc.erc20_balance(t.contract, wallet, block),
+            dust=dust,
+            diagnose_delta=lambda delta, t=token: diagnose(chain_id, wallet, t.contract, delta, txs),
+        ))
 
     token_rows.sort(key=lambda r: (r.symbol.upper(), r.contract or ""))
     all_rows = [native_row] + token_rows
