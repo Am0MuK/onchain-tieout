@@ -4,7 +4,7 @@ import pytest
 from onchain_tieout.cli import main
 from onchain_tieout.explorer import ExplorerError
 from onchain_tieout.tieout import Report, Row
-from tests.conftest import WALLET, USDC
+from tests.conftest import WALLET, USDC, WETH
 
 
 def test_invalid_address(capsys):
@@ -113,3 +113,68 @@ def test_json_output_amounts_are_strings(monkeypatch, capsys):
     assert r0["computed"] == "100"
     assert r0["actual"] == "105"
     assert r0["delta"] == "5"
+
+
+def test_token_flag_is_passed_through(monkeypatch):
+    monkeypatch.setenv("ETHERSCAN_API_KEY", "k")
+    rep = Report(wallet=WALLET, chain_id=1, block=100, rows=[])
+    with patch("onchain_tieout.cli.run_tieout", return_value=rep) as run:
+        main(["check", WALLET, "--rpc", "http://rpc", "--token", USDC, "--token", WETH])
+    assert run.call_args.kwargs["tokens"] == [USDC, WETH]
+
+
+def test_invalid_token_address_returns_2(monkeypatch, capsys):
+    monkeypatch.setenv("ETHERSCAN_API_KEY", "k")
+    rc = main(["check", WALLET, "--rpc", "http://rpc", "--token", "0x123"])
+    assert rc == 2
+    assert "Invalid token address" in capsys.readouterr().err
+
+
+def test_text_summary_counts_labels(monkeypatch, capsys):
+    monkeypatch.setenv("ETHERSCAN_API_KEY", "k")
+    def mk(label, status="MISMATCH"):
+        return Row(kind="erc20", contract=USDC, symbol="X", decimals=0, computed=1,
+                   actual=0 if status == "MISMATCH" else None, status=status, label=label, explained=False)
+    rows = [mk("unexplained"), mk("unexplained"), mk("negative_history"),
+            mk("balance_read_failed", "READ_FAILED")]
+    rep = Report(wallet=WALLET, chain_id=1, block=100, rows=rows)
+    with patch("onchain_tieout.cli.run_tieout", return_value=rep):
+        main(["check", WALLET, "--rpc", "http://rpc"])
+    out = capsys.readouterr().out
+    assert "FAIL: 4 of 4 rows do not tie out" in out
+    assert "unexplained: 2" in out
+    assert "negative_history: 1" in out
+    assert "balance_read_failed: 1" in out
+
+
+def test_small_amounts_never_use_scientific_notation(monkeypatch, capsys):
+    monkeypatch.setenv("ETHERSCAN_API_KEY", "k")
+    row = Row(kind="erc20", contract=USDC, symbol="stETH", decimals=18, computed=0,
+              actual=222681478840, status="MISMATCH", label="rebasing_token", explained=False)
+    rep = Report(wallet=WALLET, chain_id=1, block=100, rows=[row])
+    with patch("onchain_tieout.cli.run_tieout", return_value=rep):
+        main(["check", WALLET, "--rpc", "http://rpc"])
+    out = capsys.readouterr().out
+    assert "0.00000022268147884" in out
+    assert "E-" not in out
+
+
+def test_explained_mismatch_is_marked_in_text(monkeypatch, capsys):
+    monkeypatch.setenv("ETHERSCAN_API_KEY", "k")
+    row = Row(kind="erc20", contract=WETH, symbol="WETH", decimals=18, computed=-1,
+              actual=1, status="MISMATCH", label="weth_wrap_unwrap_untracked", explained=True)
+    rep = Report(wallet=WALLET, chain_id=1, block=100, rows=[row])
+    with patch("onchain_tieout.cli.run_tieout", return_value=rep):
+        main(["check", WALLET, "--rpc", "http://rpc"])
+    assert "weth_wrap_unwrap_untracked (explained)" in capsys.readouterr().out
+
+
+def test_huge_amounts_are_not_rounded(monkeypatch, capsys):
+    monkeypatch.setenv("ETHERSCAN_API_KEY", "k")
+    raw = 123456789012345678901234567890123456789
+    row = Row(kind="erc20", contract=USDC, symbol="X", decimals=18, computed=raw,
+              actual=raw, status="OK", label=None, explained=False)
+    rep = Report(wallet=WALLET, chain_id=1, block=100, rows=[row])
+    with patch("onchain_tieout.cli.run_tieout", return_value=rep):
+        main(["check", WALLET, "--rpc", "http://rpc", "--json"])
+    assert json.loads(capsys.readouterr().out)["rows"][0]["computed"] == "123456789012345678901.234567890123456789"

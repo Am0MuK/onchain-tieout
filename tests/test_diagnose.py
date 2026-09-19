@@ -34,3 +34,16 @@ def test_rebasing():
 
 def test_unexplained():
     assert diagnose(1, WALLET, USDC, delta=1, txs=[]) == ("unexplained", False)
+
+
+def test_negative_history_on_ordinary_token():
+    # History says the wallet sent more than it ever received: impossible for a
+    # standard ERC-20, typical of spam tokens that emit fake Transfer events.
+    assert diagnose(1, WALLET, USDC, delta=500, txs=[], computed=-500) == ("negative_history", False)
+
+
+def test_negative_weth_history_stays_weth_label():
+    # WETH legitimately goes negative in transfer history when the wallet unwraps.
+    txs = [call(WETH, "0xd0e30db0", value="5")]
+    label, _ = diagnose(1, WALLET, WETH, delta=5, txs=txs, computed=-5)
+    assert label == "weth_wrap_unwrap_untracked"

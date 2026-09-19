@@ -105,3 +105,9 @@ class RpcClient:
         if not isinstance(res, str) or len(res) < 66:
             raise ContractCallError(f"balanceOf returned no usable data for token {token}")
         return int(res[:66], 16)
+
+    def erc20_decimals(self, token: str, block: int) -> int:
+        res = self._call("eth_call", [{"to": token, "data": "0x313ce567"}, hex(block)])
+        if not isinstance(res, str) or len(res) < 66:
+            raise ContractCallError(f"decimals() returned no usable data for token {token}")
+        return int(res[:66], 16)

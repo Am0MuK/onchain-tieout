@@ -29,7 +29,7 @@ the chain via JSON-RPC at the same block, and reports every mismatch with a
 probable cause where one can be identified.
 
 ```
-tieout check <wallet> --chain 1 [--block N] [--json] [--dust 1e-9]
+tieout check <wallet> --chain 1 [--block N] [--token ADDR ...] [--json] [--dust 1e-9]
 ```
 
 Exit code `0` = everything ties out, `1` = at least one mismatch or unreadable
@@ -63,6 +63,9 @@ Default block is `eth_blockNumber − 64` so the explorer has indexed it.
 5. Compare with integer arithmetic. A row is a mismatch if
    `|actual − computed| > dust`, where dust defaults to 1e-9 token units
    (converted to raw units with the token's decimals; native uses 18).
+   With `--token`, only the listed contracts are checked; a listed contract
+   absent from history is still read (computed 0, decimals read via
+   `decimals()`, raw units if that fails) so missing history cannot pass.
 6. Diagnose each mismatch (labels below), render text table or JSON.
 
 ## Explorer response handling (the core of the tool)
@@ -91,6 +94,7 @@ Default block is `eth_blockNumber − 64` so the explorer has indexed it.
 |---|---|
 | `weth_wrap_unwrap_untracked` | token is the chain's WETH and the wallet sent txs to it with selector `0xd0e30db0` (deposit) or `0x2e1a7d4d` (withdraw); reported delta explained if it equals deposits − withdrawals |
 | `rebasing_token` | token contract is in a known rebasing list (stETH mainnet `0xae7ab96520de3a18e5e111b5eaab095312d7fe84`) |
+| `negative_history` | computed balance < 0 for a token that is not the chain's WETH: history claims the wallet sent more than it received (spam tokens with fake `Transfer` events) |
 | `balance_read_failed` | `balanceOf` reverted / returned no usable data (spam or non-standard tokens). Transport failures (HTTP 429/5xx, timeouts, non-JSON) are retried with back-off and, if they persist, abort the run with exit 2 — they are never reported as this label |
 | `unexplained` | anything else |
 
@@ -99,8 +103,9 @@ WETH (chain 1): `0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2`.
 ## Output
 
 Text: one row per asset — symbol, contract, computed, actual, delta, status
-(`OK` / `MISMATCH` / `READ_FAILED`), label. JSON: same data, amounts as decimal
-strings (never floats), plus `block`, `chain_id`, `wallet`, `ok` (bool).
+(`OK` / `MISMATCH` / `READ_FAILED`), label. A text summary counts non-OK rows
+per label; explained mismatches are marked `(explained)`. JSON: same data, amounts as decimal
+strings (never floats, never scientific notation, formatted with integer arithmetic), plus `block`, `chain_id`, `wallet`, `ok` (bool).
 
 ## Known limitations (documented in README, not handled in v0.1)
 

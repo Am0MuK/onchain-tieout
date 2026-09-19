@@ -72,3 +72,12 @@ def test_persistent_429_raises_transport_error_not_contract_error():
         c.erc20_balance(USDC, WALLET, 1)
     assert not isinstance(e.value, ContractCallError)
     assert "secret-key" not in str(e.value)
+
+
+def test_erc20_decimals_reads_contract():
+    def handler(request):
+        body = json.loads(request.content)
+        assert body["params"][0]["data"] == "0x313ce567"
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": "0x" + "0" * 62 + "06"})
+    rpc = RpcClient("https://rpc.example/key", httpx.Client(transport=httpx.MockTransport(handler)), sleep=lambda s: None)
+    assert rpc.erc20_decimals(USDC, 100) == 6

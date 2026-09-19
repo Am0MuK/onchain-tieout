@@ -45,6 +45,10 @@ class FakeRpc:
             raise ContractCallError(f"balanceOf reverted for {token}")
         return self._token_balances.get(token.lower(), 0)
 
+    def erc20_decimals(self, token, block):
+        self.calls.append(("erc20_decimals", token, block))
+        return 6
+
 
 def test_everything_ties_out():
     txs = [{"from": OTHER, "to": WALLET, "value": str(10**18), "gasUsed": "0", "gasPrice": "0", "isError": "0", "txreceipt_status": "1"}]
@@ -140,3 +144,25 @@ def test_transport_failure_aborts_instead_of_marking_token_unreadable():
     exp = FakeExplorer(txs=[], internals=[], tokentx=tokentx)
     with pytest.raises(RpcError):
         run_tieout(WALLET, 1, exp, ThrottledRpc(native_balance=0, token_balances={}), block=100)
+
+
+def test_token_filter_checks_only_listed_contracts():
+    spam = "0x" + "5" * 40
+    tokentx = [
+        {"from": OTHER, "to": WALLET, "value": "7", "contractAddress": USDC, "tokenSymbol": "USDC", "tokenDecimal": "6"},
+        {"from": OTHER, "to": WALLET, "value": "9", "contractAddress": spam, "tokenSymbol": "SPAM", "tokenDecimal": "18"},
+    ]
+    rpc = FakeRpc(token_balances={USDC: 7})
+    report = run_tieout(WALLET, 1, FakeExplorer(tokentx=tokentx), rpc, block=100, tokens=[USDC.upper().replace("0X", "0x")])
+    assert [r.contract for r in report.rows] == [None, USDC.lower()]
+    assert not any(c[0] == "erc20_balance" and c[1] == spam for c in rpc.calls if isinstance(c, tuple))
+
+
+def test_token_filter_keeps_listed_token_absent_from_history():
+    # A token the wallet holds but that never appears in history must still be
+    # checked (computed 0), otherwise a missing history silently passes.
+    rpc = FakeRpc(token_balances={USDC: 3})
+    report = run_tieout(WALLET, 1, FakeExplorer(), rpc, block=100, tokens=[USDC])
+    usdc = report.rows[1]
+    assert (usdc.contract, usdc.computed, usdc.actual, usdc.status) == (USDC.lower(), 0, 3, "MISMATCH")
+    assert usdc.decimals == 6  # read from the contract, not guessed

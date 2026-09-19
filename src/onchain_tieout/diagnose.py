@@ -17,6 +17,7 @@ def diagnose(
     contract: str | None,
     delta: int,
     txs: list[dict],
+    computed: int = 0,
 ) -> tuple[str, bool]:
     w = wallet.lower()
     c = contract.lower() if contract else None
@@ -53,5 +54,10 @@ def diagnose(
     rebasing_list = [addr.lower() for addr in REBASING.get(chain_id, [])]
     if c and c in rebasing_list:
         return ("rebasing_token", False)
+
+    # History claims the wallet sent more than it ever received. A standard
+    # ERC-20 cannot do that; spam tokens emitting fake Transfer events can.
+    if computed < 0:
+        return ("negative_history", False)
 
     return ("unexplained", False)

@@ -1,12 +1,16 @@
 import json
-from decimal import Decimal
+from collections import Counter
 from onchain_tieout.tieout import Report, Row
 
 
 def _format_amount(raw: int | None, decimals: int) -> str:
     if raw is None:
         return "N/A"
-    return str(Decimal(raw) / Decimal(10**decimals))
+    # Integer arithmetic only: Decimal would round to its 28-digit context.
+    sign = "-" if raw < 0 else ""
+    whole, frac = divmod(abs(raw), 10**decimals)
+    frac_text = str(frac).rjust(decimals, "0").rstrip("0") if decimals else ""
+    return f"{sign}{whole}.{frac_text}" if frac_text else f"{sign}{whole}"
 
 
 def render_text(report: Report) -> str:
@@ -28,6 +32,8 @@ def render_text(report: Report) -> str:
             delta_str = "N/A"
         status = r.status
         label = r.label or "-"
+        if r.explained:
+            label += " (explained)"
         table_rows.append([sym, contract, computed_str, actual_str, delta_str, status, label])
 
     # Compute column widths
@@ -37,13 +43,13 @@ def render_text(report: Report) -> str:
             col_widths[idx] = max(col_widths[idx], len(cell))
 
     # Format header line
-    header_line = "  ".join(f"{h:<{w}}" for h, w in zip(headers, col_widths))
+    header_line = "  ".join(f"{h:<{w}}" for h, w in zip(headers, col_widths)).rstrip()
     sep_line = "  ".join("-" * w for w in col_widths)
     lines.append(header_line)
     lines.append(sep_line)
 
     for row in table_rows:
-        lines.append("  ".join(f"{cell:<{w}}" for cell, w in zip(row, col_widths)))
+        lines.append("  ".join(f"{cell:<{w}}" for cell, w in zip(row, col_widths)).rstrip())
 
     # Final summary line
     if report.ok:
@@ -51,6 +57,9 @@ def render_text(report: Report) -> str:
     else:
         mismatches = sum(1 for r in report.rows if r.status != "OK")
         lines.append(f"FAIL: {mismatches} of {len(report.rows)} rows do not tie out")
+        labels = Counter(r.label for r in report.rows if r.status != "OK")
+        for label, count in labels.most_common():
+            lines.append(f"  {label}: {count}")
 
     return "\n".join(lines)
 

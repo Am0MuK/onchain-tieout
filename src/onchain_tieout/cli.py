@@ -22,6 +22,10 @@ def build_parser() -> argparse.ArgumentParser:
     check_parser.add_argument("--block", type=int, default=None, help="Block number (default: head - 64)")
     check_parser.add_argument("--rpc", default=None, help="RPC URL (or set TIEOUT_RPC_URL env)")
     check_parser.add_argument("--json", action="store_true", help="Output report in JSON format")
+    check_parser.add_argument(
+        "--token", action="append", default=None, metavar="ADDRESS",
+        help="Only check this ERC-20 contract (repeatable); native balance is always checked",
+    )
     check_parser.add_argument("--dust", default="0.000000001", help="Dust tolerance in token units (default: 1e-9)")
 
     return parser
@@ -40,6 +44,11 @@ def main(argv: list[str] | None = None) -> int:
     if not re.match(r"^0x[0-9a-fA-F]{40}$", wallet):
         sys.stderr.write(f"Error: Invalid wallet address: {wallet}\n")
         return 2
+
+    for token in args.token or []:
+        if not re.match(r"^0x[0-9a-fA-F]{40}$", token):
+            sys.stderr.write(f"Error: Invalid token address: {token}\n")
+            return 2
 
     # Validate API key
     api_key = os.environ.get("ETHERSCAN_API_KEY", "").strip()
@@ -65,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
                 rpc=rpc,
                 block=args.block,
                 dust_units=args.dust,
+                tokens=args.token,
             )
         except ExplorerError as exc:
             msg = redact(str(exc))
