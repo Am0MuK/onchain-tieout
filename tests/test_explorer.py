@@ -36,3 +36,34 @@ def test_http_error_raises_and_redacts_key():
 
 def test_redact():
     assert "abc" not in redact("https://x/api?apikey=abc&module=account")
+
+
+def test_paginates_by_startblock_and_dedupes():
+    calls = []
+
+    def handler(request):
+        start = int(request.url.params["startblock"])
+        calls.append(start)
+        if start == 0:
+            rows = [{"hash": f"0x{i}", "blockNumber": str(i // 10)} for i in range(10000)]
+        else:
+            # continuation starts AT the last block, so it repeats rows of block 999
+            rows = [{"hash": f"0x{i}", "blockNumber": str(i // 10)} for i in range(9990, 10005)]
+        return httpx.Response(200, json={"status": "1", "message": "OK", "result": rows})
+
+    c = EtherscanClient(api_key="k", http=mock_client(handler))
+    rows = c.fetch_all("txlist", WALLET, chain_id=1, end_block=10**9)
+    assert calls == [0, 999]
+    assert len(rows) == 10005
+    assert len({r["hash"] for r in rows}) == 10005
+
+
+def test_single_block_overflow_guard():
+    def handler(request):
+        rows = [{"hash": f"0x{i}", "blockNumber": "50"} for i in range(10000)]
+        return httpx.Response(200, json={"status": "1", "message": "OK", "result": rows})
+
+    c = EtherscanClient(api_key="k", http=mock_client(handler))
+    with pytest.raises(ExplorerError, match="more than 10000 rows in block 50; cannot paginate"):
+        c.fetch_all("txlist", WALLET, chain_id=1, end_block=10**9)
+

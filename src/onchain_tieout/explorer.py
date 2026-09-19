@@ -12,6 +12,24 @@ def redact(text: str) -> str:
     return re.sub(r"(apikey=)[^&\s]+", r"\1***", str(text), flags=re.IGNORECASE)
 
 
+def dedupe_key(action: str, row: dict):
+    if action == "txlist":
+        return row["hash"]
+    elif action == "txlistinternal":
+        return (row["hash"], row.get("traceId", ""))
+    elif action == "tokentx":
+        if "logIndex" in row:
+            return (row["hash"], row["logIndex"])
+        return (
+            row["hash"],
+            row.get("contractAddress", "").lower(),
+            row.get("from", "").lower(),
+            row.get("to", "").lower(),
+            row.get("value", ""),
+        )
+    return row.get("hash")
+
+
 class EtherscanClient:
     def __init__(
         self,
@@ -70,3 +88,38 @@ class EtherscanClient:
         if self.api_key and self.api_key in err_msg:
             err_msg = err_msg.replace(self.api_key, "***")
         raise ExplorerError(err_msg)
+
+    def fetch_all(
+        self,
+        action: str,
+        address: str,
+        chain_id: int,
+        end_block: int,
+    ) -> list[dict]:
+        all_rows: list[dict] = []
+        seen: set = set()
+        start_block = 0
+
+        while True:
+            page = self.fetch(action, address, chain_id, end_block, start_block=start_block)
+            if not page:
+                break
+
+            new_count = 0
+            for row in page:
+                key = dedupe_key(action, row)
+                if key not in seen:
+                    seen.add(key)
+                    all_rows.append(row)
+                    new_count += 1
+
+            if len(page) == 10000:
+                if new_count == 0:
+                    block_num = page[-1].get("blockNumber", start_block)
+                    raise ExplorerError(f"more than 10000 rows in block {block_num}; cannot paginate")
+                start_block = int(page[-1]["blockNumber"])
+            else:
+                break
+
+        return all_rows
+
