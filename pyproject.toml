@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "onchain-tieout"
+version = "0.1.0"
+description = "Tie out an EVM wallet's reconstructed balances against on-chain state"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = ["httpx>=0.27"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+tieout = "onchain_tieout.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/onchain_tieout"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: hits real Etherscan/RPC; needs ETHERSCAN_API_KEY and TIEOUT_RPC_URL"]
+addopts = "-m 'not live'"
