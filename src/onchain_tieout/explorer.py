@@ -5,6 +5,8 @@ import httpx
 # Etherscan V2 serves at most 1,000 rows per page, even when a larger offset is
 # requested. A page of exactly PAGE_SIZE rows may be truncated.
 PAGE_SIZE = 1000
+# Etherscan rejects page * offset > 10,000.
+MAX_PAGES = 10_000 // PAGE_SIZE
 RATE_LIMIT_RETRIES = 5
 RATE_LIMIT_BACKOFF_S = 0.5
 
@@ -40,11 +42,12 @@ class EtherscanClient:
         chain_id: int,
         end_block: int,
         start_block: int = 0,
+        page: int = 1,
     ) -> list[dict]:
         """Fetch one page; retry when Etherscan reports its per-second rate limit."""
         for attempt in range(RATE_LIMIT_RETRIES + 1):
             try:
-                return self._fetch_once(action, address, chain_id, end_block, start_block)
+                return self._fetch_once(action, address, chain_id, end_block, start_block, page)
             except ExplorerError as exc:
                 if "rate limit" not in str(exc).lower() or attempt == RATE_LIMIT_RETRIES:
                     raise
@@ -58,6 +61,7 @@ class EtherscanClient:
         chain_id: int,
         end_block: int,
         start_block: int,
+        page: int,
     ) -> list[dict]:
         params = {
             "chainid": str(chain_id),
@@ -66,7 +70,7 @@ class EtherscanClient:
             "address": address,
             "startblock": str(start_block),
             "endblock": str(end_block),
-            "page": "1",
+            "page": str(page),
             "offset": str(PAGE_SIZE),
             "sort": "asc",
             "apikey": self.api_key,
@@ -125,8 +129,24 @@ class EtherscanClient:
             first_block = int(page[0]["blockNumber"])
             last_block = int(page[-1]["blockNumber"])
             if first_block == last_block:
-                raise ExplorerError(
-                    f"more than {PAGE_SIZE} rows in block {last_block}; cannot paginate"
-                )
+                # One block holds a full page or more (e.g. a spam airdrop):
+                # read that block on its own, page by page.
+                all_rows.extend(self._fetch_single_block(action, address, chain_id, last_block))
+                if last_block >= end_block:
+                    return all_rows
+                start_block = last_block + 1
+                continue
+
             all_rows.extend(r for r in page if int(r["blockNumber"]) != last_block)
             start_block = last_block
+
+    def _fetch_single_block(self, action: str, address: str, chain_id: int, block: int) -> list[dict]:
+        rows: list[dict] = []
+        for page_no in range(1, MAX_PAGES + 1):
+            page = self.fetch(action, address, chain_id, block, start_block=block, page=page_no)
+            rows.extend(page)
+            if len(page) < PAGE_SIZE:
+                return rows
+        raise ExplorerError(
+            f"more than {MAX_PAGES * PAGE_SIZE} rows in block {block}; cannot paginate"
+        )

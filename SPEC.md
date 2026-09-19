@@ -81,7 +81,9 @@ Default block is `eth_blockNumber − 64` so the explorer has indexed it.
   `startblock = that block`, so the boundary block is fetched whole from the next
   page. No key-based de-duplication (it can merge genuinely identical rows, e.g.
   two equal transfers in one transaction). If a full page lies entirely inside one
-  block → `ExplorerError` (cannot paginate).
+  block (e.g. a spam airdrop), that block is read alone with `startblock == endblock`
+  and `page=1,2,…` (Etherscan allows page × offset ≤ 10,000); a block with more
+  rows than that → `ExplorerError` (cannot paginate).
 
 ## Diagnosis labels
 

@@ -58,15 +58,43 @@ def test_paginates_by_startblock_refetching_boundary_block():
     assert len({r["hash"] for r in rows}) == PAGE_SIZE + 5
 
 
-def test_single_block_overflow_guard():
+def test_block_larger_than_a_page_is_read_with_page_numbers():
+    # 2.5 pages of rows in one block (e.g. a spam airdrop). startblock-based
+    # pagination cannot get past it, so that block is read on its own with
+    # page=1,2,3 and startblock == endblock.
+    big_block = [{"hash": f"0xb{i}", "blockNumber": "50"} for i in range(PAGE_SIZE * 5 // 2)]
+    later = [{"hash": "0xlater", "blockNumber": "60"}]
+    calls = []
+
+    def handler(request):
+        q = request.url.params
+        start, end, page = int(q["startblock"]), int(q["endblock"]), int(q["page"])
+        calls.append((start, end, page))
+        if start == end == 50:
+            rows = big_block[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+        elif start == 0:
+            rows = big_block[:PAGE_SIZE]
+        else:  # start == 51
+            rows = later
+        return httpx.Response(200, json={"status": "1", "message": "OK", "result": rows})
+
+    c = EtherscanClient(api_key="k", http=mock_client(handler))
+    rows = c.fetch_all("tokentx", WALLET, chain_id=1, end_block=100)
+    assert len(rows) == len(big_block) + 1
+    assert (50, 50, 3) in calls
+    assert calls[-1][0] == 51
+
+
+def test_block_beyond_page_number_window_raises():
+    # Etherscan refuses page * offset > 10,000; a block that still fills the
+    # last reachable page cannot be read completely and must fail loudly.
     def handler(request):
         rows = [{"hash": f"0x{i}", "blockNumber": "50"} for i in range(PAGE_SIZE)]
         return httpx.Response(200, json={"status": "1", "message": "OK", "result": rows})
 
     c = EtherscanClient(api_key="k", http=mock_client(handler))
-    with pytest.raises(ExplorerError, match="rows in block 50; cannot paginate"):
+    with pytest.raises(ExplorerError, match="block 50"):
         c.fetch_all("txlist", WALLET, chain_id=1, end_block=10**9)
-
 
 
 def test_status_one_with_non_list_result_raises_not_empty():
