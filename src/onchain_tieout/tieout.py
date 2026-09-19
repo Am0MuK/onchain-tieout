@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from onchain_tieout.diagnose import diagnose, WETH_BY_CHAIN
 from onchain_tieout.reconstruct import native_balance, token_balances, TokenBalance
-from onchain_tieout.rpc import RpcError
+from onchain_tieout.rpc import ContractCallError
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ def _compare(*, kind, contract, symbol, decimals, computed, read_actual, dust, d
     base = dict(kind=kind, contract=contract, symbol=symbol, decimals=decimals, computed=computed)
     try:
         actual = read_actual()
-    except RpcError:
+    except ContractCallError:
         return Row(**base, actual=None, status="READ_FAILED",
                    label="balance_read_failed", explained=False)
 

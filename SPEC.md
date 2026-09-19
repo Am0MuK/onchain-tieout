@@ -91,7 +91,7 @@ Default block is `eth_blockNumber − 64` so the explorer has indexed it.
 |---|---|
 | `weth_wrap_unwrap_untracked` | token is the chain's WETH and the wallet sent txs to it with selector `0xd0e30db0` (deposit) or `0x2e1a7d4d` (withdraw); reported delta explained if it equals deposits − withdrawals |
 | `rebasing_token` | token contract is in a known rebasing list (stETH mainnet `0xae7ab96520de3a18e5e111b5eaab095312d7fe84`) |
-| `balance_read_failed` | `balanceOf` reverted / returned invalid data (spam or non-standard tokens) |
+| `balance_read_failed` | `balanceOf` reverted / returned no usable data (spam or non-standard tokens). Transport failures (HTTP 429/5xx, timeouts, non-JSON) are retried with back-off and, if they persist, abort the run with exit 2 — they are never reported as this label |
 | `unexplained` | anything else |
 
 WETH (chain 1): `0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2`.

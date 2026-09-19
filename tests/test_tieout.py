@@ -1,6 +1,7 @@
 import pytest
 from onchain_tieout.tieout import run_tieout, Row, Report
-from onchain_tieout.rpc import RpcError
+import pytest
+from onchain_tieout.rpc import RpcError, ContractCallError
 from tests.conftest import WALLET, OTHER, WETH, USDC
 
 
@@ -41,7 +42,7 @@ class FakeRpc:
     def erc20_balance(self, token, owner, block):
         self.calls.append(("erc20_balance", token, owner, block))
         if token.lower() in self.fail_tokens:
-            raise RpcError(f"balanceOf failed for {token}")
+            raise ContractCallError(f"balanceOf reverted for {token}")
         return self._token_balances.get(token.lower(), 0)
 
 
@@ -124,3 +125,18 @@ def test_delta_within_dust():
     native_row = report.rows[0]
     assert native_row.status == "OK"
     assert native_row.label is None
+
+
+def test_transport_failure_aborts_instead_of_marking_token_unreadable():
+    # A rate-limited or unreachable RPC says nothing about the token. Reporting
+    # it as balance_read_failed would hide a data-source problem behind a
+    # token label, so the run must abort instead.
+    class ThrottledRpc(FakeRpc):
+        def erc20_balance(self, token, owner, block):
+            raise RpcError("HTTP 429 Too Many Requests")
+
+    tokentx = [{"from": OTHER, "to": WALLET, "value": "1", "contractAddress": USDC,
+                "tokenSymbol": "USDC", "tokenDecimal": "6"}]
+    exp = FakeExplorer(txs=[], internals=[], tokentx=tokentx)
+    with pytest.raises(RpcError):
+        run_tieout(WALLET, 1, exp, ThrottledRpc(native_balance=0, token_balances={}), block=100)
