@@ -1,7 +1,12 @@
 import re
+import time
 import httpx
 
-PAGE_SIZE = 10000
+# Etherscan V2 serves at most 1,000 rows per page, even when a larger offset is
+# requested. A page of exactly PAGE_SIZE rows may be truncated.
+PAGE_SIZE = 1000
+RATE_LIMIT_RETRIES = 5
+RATE_LIMIT_BACKOFF_S = 0.5
 
 
 class ExplorerError(Exception):
@@ -21,10 +26,12 @@ class EtherscanClient:
         api_key: str,
         http: httpx.Client,
         base_url: str = "https://api.etherscan.io/v2/api",
+        sleep=time.sleep,
     ):
         self.api_key = api_key
         self.http = http
         self.base_url = base_url
+        self._sleep = sleep
 
     def fetch(
         self,
@@ -33,6 +40,24 @@ class EtherscanClient:
         chain_id: int,
         end_block: int,
         start_block: int = 0,
+    ) -> list[dict]:
+        """Fetch one page; retry when Etherscan reports its per-second rate limit."""
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            try:
+                return self._fetch_once(action, address, chain_id, end_block, start_block)
+            except ExplorerError as exc:
+                if "rate limit" not in str(exc).lower() or attempt == RATE_LIMIT_RETRIES:
+                    raise
+                self._sleep(RATE_LIMIT_BACKOFF_S * (attempt + 1))
+        raise AssertionError("unreachable")
+
+    def _fetch_once(
+        self,
+        action: str,
+        address: str,
+        chain_id: int,
+        end_block: int,
+        start_block: int,
     ) -> list[dict]:
         params = {
             "chainid": str(chain_id),
@@ -81,7 +106,7 @@ class EtherscanClient:
         chain_id: int,
         end_block: int,
     ) -> list[dict]:
-        """Fetch every row up to end_block, paginating past the 10,000-row cap.
+        """Fetch every row up to end_block, paginating past the per-page row cap.
 
         A full page may end in the middle of a block. Instead of de-duplicating
         rows by a key (which can merge genuinely identical rows, e.g. two equal

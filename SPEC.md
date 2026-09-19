@@ -9,8 +9,9 @@ pipeline still "succeeds":
 
 - The API answers HTTP 200 with `status: "0"` and an error message (e.g. "Free API
   access is not supported for this chain") — easy to misread as "no transactions".
-- Result sets are capped (10,000 rows per query); without pagination the history
-  is silently truncated.
+- Result pages are capped. Etherscan V2 serves at most 1,000 rows per page even
+  when `offset=10000` is requested — trusting the requested size silently
+  truncates history (found by running this tool against a real wallet).
 - Reverted transactions appear in transaction lists with a non-zero `value`, but
   no value moved (the gas fee did).
 - `WETH9.deposit()` / `withdraw()` emit `Deposit` / `Withdrawal`, never an ERC-20
@@ -72,8 +73,10 @@ Default block is `eth_blockNumber − 64` so the explorer has indexed it.
 - any other `status == "0"` → raise `ExplorerError(message, result)`; never
   treated as empty history.
 - HTTP error / non-JSON → `ExplorerError`.
+- `status == "0"` with a rate-limit message ("Max calls per sec") → retried with
+  back-off (5 attempts), then `ExplorerError`.
 - `status == "1"` with a non-list `result` → `ExplorerError` (never an empty history).
-- Pagination: request `page=1&offset=10000&sort=asc`. If a page is full (10,000
+- Pagination: request `page=1&offset=1000&sort=asc`. If a page is full (1,000
   rows), drop that page's rows from its last block and request again with
   `startblock = that block`, so the boundary block is fetched whole from the next
   page. No key-based de-duplication (it can merge genuinely identical rows, e.g.

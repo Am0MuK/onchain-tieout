@@ -19,7 +19,7 @@ FAIL: 1 of 2 rows do not tie out
 
 Blockchain data pipelines routinely encounter silent failure modes where ingestion finishes without errors but balances are incomplete or incorrect:
 - **Status 0 Errors**: Explorer APIs return HTTP 200 with `status: "0"` on errors or unsupported chains, easily mistaken for empty history.
-- **Silent Truncation**: Explorer queries cap at 10,000 results, truncating transaction histories unless carefully paginated and deduplicated.
+- **Silent Truncation**: Explorer pages are capped (Etherscan V2 serves 1,000 rows per page even when 10,000 are requested); treating a short page as "the end" silently truncates history.
 - **Reverted Transactions**: Reverted transactions include non-zero `value` in explorer results despite no value moving (only gas was spent).
 - **WETH Wrap/Unwrap**: `WETH9.deposit()` and `withdraw()` emit `Deposit` and `Withdrawal` events rather than ERC-20 `Transfer`, rendering WETH legs invisible to transfer indexers.
 - **Rebasing Tokens**: Tokens such as stETH adjust balances continuously without emitting on-chain transfer events.
